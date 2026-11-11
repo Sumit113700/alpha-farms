@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import sqlite3
 import random
+import smtplib
+from email.mime.text import MIMEText
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -13,6 +15,33 @@ st.set_page_config(
     page_icon="🌾",
     layout="wide"
 )
+
+# --- EMAIL CREDENTIALS & SENDER ---
+def get_email_credentials():
+    sender = st.secrets.get("SENDER_EMAIL", "").strip() if hasattr(st, "secrets") else ""
+    pwd = st.secrets.get("APP_PASSWORD", "").replace(" ", "").strip() if hasattr(st, "secrets") else ""
+    return sender, pwd
+
+def send_otp_email(receiver_email, otp_code):
+    sender_email, app_password = get_email_credentials()
+    
+    if not sender_email or not app_password:
+        return False, "Secrets में SENDER_EMAIL या APP_PASSWORD नहीं मिला!"
+
+    subject = "🌾 Alpha Farms - लॉगिन OTP"
+    body = f"नमस्ते,\n\nAlpha Farms पोर्टल में लॉगिन करने के लिए OTP है:\n\n👉 {otp_code}\n\nयह कोड 5 मिनट तक मान्य है।"
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+            server.login(sender_email, app_password)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        return True, "ईमेल सफलतापूर्वक भेज दिया गया!"
+    except Exception as e:
+        return False, f"SMTP एरर: {str(e)}"
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -110,6 +139,8 @@ if "generated_otp" not in st.session_state:
     st.session_state.generated_otp = None
 if "target_email" not in st.session_state:
     st.session_state.target_email = ""
+if "email_status_msg" not in st.session_state:
+    st.session_state.email_status_msg = ""
 
 # --- LOGIN SCREEN ---
 if not st.session_state.authenticated:
@@ -122,14 +153,16 @@ if not st.session_state.authenticated:
             with st.form("login_email_form"):
                 st.subheader("🔒 लॉगिन हेतु ईमेल दर्ज करें")
                 email_input = st.text_input("अपना ईमेल दर्ज करें:", value="Sumitmishra27274@gmail.com")
-                submit_otp = st.form_submit_button("📩 OTP प्राप्त करें ➔", use_container_width=True, type="primary")
+                submit_otp = st.form_submit_button("📩 OTP भेजें ➔", use_container_width=True, type="primary")
 
                 if submit_otp:
                     if email_input.strip() and "@" in email_input:
                         otp_code = str(random.randint(100000, 999999))
+                        success, msg = send_otp_email(email_input.strip(), otp_code)
                         st.session_state.generated_otp = otp_code
                         st.session_state.target_email = email_input.strip()
                         st.session_state.otp_sent = True
+                        st.session_state.email_status_msg = (success, msg)
                         st.rerun()
                     else:
                         st.warning("कृपया सही ईमेल पता दर्ज करें!")
@@ -138,8 +171,12 @@ if not st.session_state.authenticated:
                 st.subheader("📩 OTP सत्यापन")
                 st.caption(f"ईमेल: **{st.session_state.target_email}**")
                 
-                # स्क्रीन पर स्पष्ट डेमो OTP
-                st.success(f"🔑 आपका लॉगिन OTP कोड है: **{st.session_state.generated_otp}**")
+                success, msg = st.session_state.email_status_msg
+                if success:
+                    st.success("✅ OTP आपके Gmail पर भेज दिया गया है!")
+                else:
+                    st.error(f"❌ {msg}")
+                    st.warning(f"⚠️ [बैकअप कोड] यदि मेल नहीं आया तो इस OTP से लॉगिन करें: **{st.session_state.generated_otp}**")
                 
                 entered_otp = st.text_input("6 अंकों का OTP दर्ज करें:", max_chars=6)
                 verify_btn = st.form_submit_button("✅ सत्यापित करें और प्रवेश करें ➔", use_container_width=True, type="primary")
@@ -157,7 +194,7 @@ if not st.session_state.authenticated:
                     else:
                         st.error("गलत OTP दर्ज किया गया है!")
 
-            if st.button("🔄 ईमेल बदलें या नया OTP लें"):
+            if st.button("🔄 दोबारा OTP भेजें या ईमेल बदलें"):
                 st.session_state.otp_sent = False
                 st.session_state.generated_otp = None
                 st.rerun()
@@ -349,5 +386,5 @@ elif menu == "📈 ओवरऑल प्रोग्रेस सारां�
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("कुल पर्चियाँ", f"{kpi[0]}")
         c2.metric("कुल वजन", f"{kpi[1]:.2f} Qtl")
-        c3.metric("सकल गन्ना मूल्य", f"₹{kpi[2]:,.2f}")
+        c3.metric("सकल मूल्य", f"₹{kpi[2]:,.2f}")
         c4.metric("शुद्ध बचत (In-Hand)", f"₹{kpi[3]:,.2f}")
